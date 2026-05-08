@@ -8,15 +8,15 @@ is built on MCP), Perplexity (custom remote connectors).
 Transport: Streamable HTTP for remote use (Railway-deployed). Stateless JSON
 per recommended pattern in the MCP spec.
 
-Tonight's scope (v0.1):
-  - tintatlanta_list_services       (GET /api/v1/services)
-  - tintatlanta_business_location   (GET /api/v1/location)
-  - tintatlanta_list_faq            (GET /api/v1/faq)
-  - tintatlanta_get_estimate        (POST /api/v1/estimates)
+Read-only tools shipped (v0.1 + v0.1.1):
+  - tintatlanta_list_services         (GET  /api/v1/services)
+  - tintatlanta_business_location     (GET  /api/v1/location)
+  - tintatlanta_list_faq              (GET  /api/v1/faq)
+  - tintatlanta_get_estimate          (POST /api/v1/estimates)
+  - tintatlanta_check_availability    (GET  /api/v1/availability)
+  - tintatlanta_flat_glass_estimate   (POST /api/v1/flat-glass/estimate)
 
-Roadmapped for v0.2 (multi-session):
-  - tintatlanta_check_availability
-  - tintatlanta_flat_glass_estimate
+Roadmapped for v0.2 (multi-session, side-effect tools with consent gates):
   - tintatlanta_submit_quote_request   (side_effect=creates_lead, consent gate)
   - tintatlanta_register_api_key
   - tintatlanta_book_appointment       (side_effect=books_appointment + charges_deposit, consent gate, requires API key)
@@ -280,6 +280,118 @@ async def tintatlanta_get_estimate(
 
 
 # -----------------------------------------------------------------------------
+# Tool: check_availability
+# -----------------------------------------------------------------------------
+
+
+@mcp.tool(
+    name="tintatlanta_check_availability",
+    annotations={
+        "title": "Check appointment availability",
+        "readOnlyHint": True,
+        "destructiveHint": False,
+        "idempotentHint": True,
+        "openWorldHint": True,
+    },
+)
+async def tintatlanta_check_availability(
+    date: Optional[str] = None,
+    service: Optional[int] = None,
+    days: Optional[int] = None,
+) -> Dict[str, Any]:
+    """
+    Look up open appointment slots at the Woodstock shop. Returns either
+    per-day slot counts for the next N days (when no date is given) or the
+    list of open time slots on a specific date.
+
+    No side effects — does not hold or reserve a slot. Safe to call without
+    user consent. To actually reserve, call tintatlanta_book_appointment
+    (when available) — that one creates a lead, charges a deposit, and
+    requires explicit user consent + an API key.
+
+    Args:
+        date: Optional ISO date 'YYYY-MM-DD' to scope to one day's open
+            time slots. Omit to receive a 7-day overview.
+        service: Optional service id (1 = automotive). Omit for all
+            available services.
+        days: Optional override for how many days ahead to scan (default 7).
+    """
+    query: Dict[str, Any] = {}
+    if date is not None:
+        query["date"] = date
+    if service is not None:
+        query["service"] = service
+    if days is not None:
+        query["days"] = days
+    return await _http_get("/availability", params=query or None)
+
+
+# -----------------------------------------------------------------------------
+# Tool: flat_glass_estimate (residential / commercial / security)
+# -----------------------------------------------------------------------------
+
+
+@mcp.tool(
+    name="tintatlanta_flat_glass_estimate",
+    annotations={
+        "title": "Get a residential / commercial flat-glass film estimate",
+        "readOnlyHint": True,
+        "destructiveHint": False,
+        "idempotentHint": True,
+        "openWorldHint": True,
+    },
+)
+async def tintatlanta_flat_glass_estimate(
+    total_sqft: float,
+    site_type: str,
+    primary_concern: Optional[str] = None,
+    floors: Optional[int] = None,
+    needs_ladder: Optional[bool] = None,
+    film_goals: Optional[List[str]] = None,
+) -> Dict[str, Any]:
+    """
+    Get a Good/Better/Best tier price estimate for a flat-glass window-film
+    job (residential, commercial, or security film). Pricing is keyed off
+    total square footage with adders for ladder-access (upper-story
+    windows), site profile, and film goals.
+
+    No side effects — does not create a lead, does not commit a booking.
+    Safe to call without user consent. For automotive jobs use
+    tintatlanta_get_estimate. For a custom commercial/residential proposal
+    that includes a follow-up site assessment, call
+    tintatlanta_submit_quote_request (when available) — that path creates
+    a CRM lead and requires explicit user consent.
+
+    Args:
+        total_sqft: Total square footage of glass to be filmed. Required
+            and must be > 0. A reasonable residential range is 100–600,
+            commercial 500–10,000+.
+        site_type: 'residential', 'commercial', or 'security'. Required.
+        primary_concern: One of 'heat', 'glare', 'privacy', 'uv',
+            'safety', 'security'. Steers the recommended film tier.
+        floors: Number of floors. Triggers ladder-surcharge for any value > 1.
+        needs_ladder: Explicit boolean override for the ladder surcharge —
+            set true for upper-story windows even on a single-floor footprint.
+        film_goals: Optional list of goal strings (e.g. ['heat', 'glare',
+            'fade_protection']). Returned in the structured CRM
+            property_info payload.
+    """
+    body: Dict[str, Any] = {
+        "total_sqft": total_sqft,
+        "site_type": site_type,
+    }
+    for k, v in {
+        "primary_concern": primary_concern,
+        "floors": floors,
+        "needs_ladder": needs_ladder,
+        "film_goals": film_goals,
+    }.items():
+        if v is not None:
+            body[k] = v
+    return await _http_post("/flat-glass/estimate", body)
+
+
+# -----------------------------------------------------------------------------
 # Health check (Railway uses this to confirm the container is up)
 # -----------------------------------------------------------------------------
 
@@ -300,6 +412,8 @@ async def health(_request) -> Any:  # type: ignore[no-untyped-def]
                 "tintatlanta_business_location",
                 "tintatlanta_list_faq",
                 "tintatlanta_get_estimate",
+                "tintatlanta_check_availability",
+                "tintatlanta_flat_glass_estimate",
             ],
         }
     )
