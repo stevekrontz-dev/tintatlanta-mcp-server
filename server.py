@@ -311,10 +311,39 @@ async def health(_request) -> Any:  # type: ignore[no-untyped-def]
 
 
 if __name__ == "__main__":
+    from mcp.server.streamable_http import TransportSecuritySettings
+
     port = int(os.environ.get("PORT", 8080))
+
     # streamable-http transport: single endpoint, stateless JSON. Compatible
     # with Claude.ai's remote MCP, Perplexity custom remote connectors, and
     # ChatGPT Apps SDK (which is built on MCP).
     mcp.settings.host = "0.0.0.0"
     mcp.settings.port = port
+
+    # DNS-rebinding-protection bypass for the Railway public domain. The
+    # mcp-python-sdk ships with host validation enabled by default (good
+    # default for localhost dev), which 421s any Host header not in
+    # allowed_hosts. We're behind Railway's edge proxy, so the Host header
+    # arrives as the public app URL — list it explicitly. Set
+    # ALLOWED_MCP_HOSTS env to a comma-separated list to override (e.g. when
+    # the Railway custom domain changes).
+    railway_host = os.environ.get("RAILWAY_PUBLIC_DOMAIN", "")
+    extra_hosts_env = os.environ.get("ALLOWED_MCP_HOSTS", "")
+    allowed_hosts = [h.strip() for h in extra_hosts_env.split(",") if h.strip()]
+    if railway_host and railway_host not in allowed_hosts:
+        allowed_hosts.append(railway_host)
+    # Always allow the local container address so Railway's healthcheck
+    # passes. /health is a custom_route and bypasses MCP-session host
+    # validation, but we keep these here for any local + IP-based probes.
+    for h in ("localhost", "127.0.0.1", "0.0.0.0", f"localhost:{port}", f"127.0.0.1:{port}"):
+        if h not in allowed_hosts:
+            allowed_hosts.append(h)
+
+    mcp.settings.transport_security = TransportSecuritySettings(
+        enable_dns_rebinding_protection=True,
+        allowed_hosts=allowed_hosts,
+        allowed_origins=[],  # streamable-http MCP doesn't enforce CORS Origin
+    )
+
     mcp.run(transport="streamable-http")
