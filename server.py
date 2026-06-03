@@ -44,7 +44,8 @@ UPSTREAM_URL = os.environ.get(
     "UPSTREAM_URL",
     "https://inspiring-tenderness-production.up.railway.app",
 )
-SERVER_USER_AGENT = "TintAtlanta-MCP/0.1.0"
+SERVER_VERSION = "0.2.0"
+SERVER_USER_AGENT = f"TintAtlanta-MCP/{SERVER_VERSION}"
 HTTP_TIMEOUT_SECONDS = 30.0
 
 # -----------------------------------------------------------------------------
@@ -398,24 +399,27 @@ async def tintatlanta_flat_glass_estimate(
 
 @mcp.custom_route("/health", methods=["GET"])
 async def health(_request) -> Any:  # type: ignore[no-untyped-def]
-    """Plain HTTP health endpoint at /health for Railway's healthcheck."""
+    """Plain HTTP health endpoint for Railway's healthcheck AND the CRM dashboard
+    monitor. The tool list is derived from the live MCP registry so it can never
+    drift from the actually-registered tools (the old hardcoded list did). CORS is
+    open so the server-rendered CRM dashboard can read it cross-origin.
+    """
     from starlette.responses import JSONResponse
 
+    tools = sorted(t.name for t in await mcp.list_tools())
     return JSONResponse(
         {
             "status": "ok",
             "server": "tintatlanta_mcp",
-            "version": "0.1.0",
+            "version": SERVER_VERSION,
             "upstream": UPSTREAM_URL,
-            "tools": [
-                "tintatlanta_list_services",
-                "tintatlanta_business_location",
-                "tintatlanta_list_faq",
-                "tintatlanta_get_estimate",
-                "tintatlanta_check_availability",
-                "tintatlanta_flat_glass_estimate",
-            ],
-        }
+            "tool_count": len(tools),
+            "tools": tools,
+        },
+        headers={
+            "Access-Control-Allow-Origin": "*",
+            "Cache-Control": "no-store",
+        },
     )
 
 
