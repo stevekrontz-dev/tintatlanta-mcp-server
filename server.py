@@ -60,27 +60,52 @@ mcp = FastMCP("tintatlanta_mcp")
 # -----------------------------------------------------------------------------
 
 
-async def _http_get(path: str, params: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
-    """GET helper. Returns the parsed JSON body or raises a clean error."""
+async def _http_get(
+    path: str,
+    params: Optional[Dict[str, Any]] = None,
+    *,
+    transport: Optional[httpx.AsyncBaseTransport] = None,
+) -> Dict[str, Any]:
+    """GET helper. Returns the parsed JSON body or raises a clean error.
+
+    `transport` is a test seam: when None (production default) a normal
+    network-backed AsyncClient is built; tests pass an httpx.MockTransport to
+    intercept the request without touching the network.
+    """
     url = f"{UPSTREAM_URL.rstrip('/')}{path}"
     headers = {
         "Accept": "application/json",
         "User-Agent": SERVER_USER_AGENT,
     }
-    async with httpx.AsyncClient(timeout=HTTP_TIMEOUT_SECONDS) as client:
+    async with httpx.AsyncClient(timeout=HTTP_TIMEOUT_SECONDS, transport=transport) as client:
         resp = await client.get(url, headers=headers, params=params)
     return _unwrap(resp, url)
 
 
-async def _http_post(path: str, body: Dict[str, Any]) -> Dict[str, Any]:
-    """POST helper for endpoints that take a JSON body."""
+async def _http_post(
+    path: str,
+    body: Dict[str, Any],
+    *,
+    api_key: Optional[str] = None,
+    transport: Optional[httpx.AsyncBaseTransport] = None,
+) -> Dict[str, Any]:
+    """POST helper for endpoints that take a JSON body.
+
+    When `api_key` is provided it is forwarded as an
+    `Authorization: Bearer <api_key>` header (used by the booking endpoint).
+    Default None leaves existing call sites unauthenticated, unchanged.
+
+    `transport` is a test seam (see _http_get).
+    """
     url = f"{UPSTREAM_URL.rstrip('/')}{path}"
     headers = {
         "Accept": "application/json",
         "Content-Type": "application/json",
         "User-Agent": SERVER_USER_AGENT,
     }
-    async with httpx.AsyncClient(timeout=HTTP_TIMEOUT_SECONDS) as client:
+    if api_key:
+        headers["Authorization"] = f"Bearer {api_key}"
+    async with httpx.AsyncClient(timeout=HTTP_TIMEOUT_SECONDS, transport=transport) as client:
         resp = await client.post(url, headers=headers, json=body)
     return _unwrap(resp, url)
 
@@ -390,6 +415,214 @@ async def tintatlanta_flat_glass_estimate(
         if v is not None:
             body[k] = v
     return await _http_post("/flat-glass/estimate", body)
+
+
+# -----------------------------------------------------------------------------
+# Tool: submit_quote_request (WRITE — creates a CRM lead)
+# -----------------------------------------------------------------------------
+
+
+@mcp.tool(
+    name="tintatlanta_submit_quote_request",
+    annotations={
+        "title": "Submit a quote request (creates a real CRM lead)",
+        "readOnlyHint": False,
+        "destructiveHint": False,
+        "idempotentHint": False,
+        "openWorldHint": True,
+    },
+)
+async def tintatlanta_submit_quote_request(
+    first_name: str,
+    phone: str,
+    email: str,
+    service_type: str,
+    last_name: Optional[str] = None,
+    company_name: Optional[str] = None,
+    property_info: Optional[str] = None,
+    message: Optional[str] = None,
+    building_type: Optional[str] = None,
+    square_footage: Optional[float] = None,
+    window_count: Optional[int] = None,
+    floors: Optional[int] = None,
+    needs_ladder: Optional[bool] = None,
+) -> Dict[str, Any]:
+    """
+    Submit a formal quote request to Tint Atlanta. THIS CREATES A REAL CRM
+    LEAD that the shop's team actively follows up on (a human will call/email
+    the customer). It is NOT a price estimate — for pricing use
+    tintatlanta_get_estimate (automotive) or tintatlanta_flat_glass_estimate
+    (flat glass), neither of which has side effects.
+
+    ONLY call this tool after the user has EXPLICITLY said they want to be
+    contacted / want a formal quote, AND has given their name, phone, and
+    email. Always read the collected details back to the user and confirm
+    them BEFORE calling — a submission cannot be quietly undone.
+
+    Args:
+        first_name: Customer first name. Required.
+        phone: Customer phone number. Required — the shop calls this number.
+        email: Customer email. Required.
+        service_type: What they want quoted — e.g. 'automotive',
+            'residential', 'commercial', 'security'. Required.
+        last_name: Customer last name.
+        company_name: Business name (for commercial leads).
+        property_info: Free-text description of the property / vehicle / job.
+        message: Any extra notes from the customer.
+        building_type: Building type for flat-glass jobs (e.g. 'home',
+            'office', 'storefront', 'warehouse').
+        square_footage: Approximate glass square footage (flat glass).
+        window_count: Approximate number of windows.
+        floors: Number of floors (drives ladder-access considerations).
+        needs_ladder: Whether upper-story / ladder access is needed.
+    """
+    body: Dict[str, Any] = {
+        "first_name": first_name,
+        "phone": phone,
+        "email": email,
+        "service_type": service_type,
+    }
+    for k, v in {
+        "last_name": last_name,
+        "company_name": company_name,
+        "property_info": property_info,
+        "message": message,
+        "building_type": building_type,
+        "square_footage": square_footage,
+        "window_count": window_count,
+        "floors": floors,
+        "needs_ladder": needs_ladder,
+    }.items():
+        if v is not None:
+            body[k] = v
+    return await _http_post("/quote-request", body)
+
+
+# -----------------------------------------------------------------------------
+# Tool: register_api_key (WRITE — issues a one-time API key)
+# -----------------------------------------------------------------------------
+
+
+@mcp.tool(
+    name="tintatlanta_register_api_key",
+    annotations={
+        "title": "Register an API key for booking",
+        "readOnlyHint": False,
+        "destructiveHint": False,
+        "idempotentHint": False,
+        "openWorldHint": True,
+    },
+)
+async def tintatlanta_register_api_key(
+    name: str,
+    email: str,
+    use_case: str,
+) -> Dict[str, Any]:
+    """
+    Register for an API key that authorizes appointment booking via
+    tintatlanta_book_appointment. Returns a one-time key of the form
+    `ta_live_<hex>` good for 300 requests/minute. Only one active key exists
+    per email (re-registering the same email rotates/replaces the key).
+
+    IMPORTANT: STORE the returned api_key and REUSE it for all subsequent
+    tintatlanta_book_appointment calls. The full key is shown ONLY ONCE in
+    this response and CANNOT be retrieved later — if you lose it you must
+    register again to get a new one.
+
+    Args:
+        name: Name of the person/agent/integration registering the key.
+        email: Contact email the key is tied to (one active key per email).
+        use_case: Short description of what the key will be used for.
+    """
+    body: Dict[str, Any] = {
+        "name": name,
+        "email": email,
+        "use_case": use_case,
+    }
+    return await _http_post("/register", body)
+
+
+# -----------------------------------------------------------------------------
+# Tool: book_appointment (WRITE — books a real appointment, needs API key)
+# -----------------------------------------------------------------------------
+
+
+@mcp.tool(
+    name="tintatlanta_book_appointment",
+    annotations={
+        "title": "Book an appointment (real booking, requires API key)",
+        "readOnlyHint": False,
+        "destructiveHint": False,
+        "idempotentHint": False,
+        "openWorldHint": True,
+    },
+)
+async def tintatlanta_book_appointment(
+    api_key: str,
+    date: str,
+    time: str,
+    customer_name: str,
+    customer_phone: str,
+    customer_email: str,
+    service_type: str = "automotive",
+    vehicle_year: Optional[int] = None,
+    vehicle_make: Optional[str] = None,
+    vehicle_model: Optional[str] = None,
+    vehicle_type: Optional[str] = None,
+    coverage: Optional[str] = None,
+    film_type: Optional[str] = None,
+    special_requests: Optional[str] = None,
+) -> Dict[str, Any]:
+    """
+    Book a REAL appointment at the Woodstock shop. This commits a slot on the
+    shop's calendar and is followed up by staff — treat it like a binding
+    action.
+
+    Requires an `api_key` obtained from tintatlanta_register_api_key (it is
+    sent as an Authorization: Bearer token). Before calling, ALWAYS call
+    tintatlanta_check_availability first to confirm the requested date/time is
+    an actually-open slot, and read the date, time, and vehicle/job details
+    back to the user and get their confirmation. A booking cannot be quietly
+    undone.
+
+    Args:
+        api_key: A `ta_live_<hex>` key from tintatlanta_register_api_key.
+            Required. Sent as Authorization: Bearer, never stored server-side.
+        date: Appointment date 'YYYY-MM-DD'. Required. Must be a slot returned
+            by tintatlanta_check_availability.
+        time: Appointment start time (e.g. '10:00'). Required.
+        customer_name: Customer full name. Required.
+        customer_phone: Customer phone number. Required.
+        customer_email: Customer email. Required.
+        service_type: Service being booked. Default 'automotive'.
+        vehicle_year: Vehicle model year (automotive).
+        vehicle_make: Vehicle make (automotive).
+        vehicle_model: Vehicle model (automotive).
+        vehicle_type: Body style (sedan, suv, truck, etc.) for pricing.
+        coverage: 'full' or 'front2' (automotive coverage).
+        film_type: 'standard' or 'ceramic'.
+        special_requests: Any free-text notes for the appointment.
+    """
+    body: Dict[str, Any] = {
+        "date": date,
+        "time": time,
+        "customer_name": customer_name,
+        "customer_phone": customer_phone,
+        "customer_email": customer_email,
+        "service_type": service_type,
+    }
+    for k, v in {
+        "vehicle_year": vehicle_year,
+        "vehicle_make": vehicle_make,
+        "vehicle_model": vehicle_model,
+        "vehicle_type": vehicle_type,
+        "coverage": coverage,
+        "film_type": film_type,
+        "special_requests": special_requests,
+    }.items():
+        if v is not None:
+            body[k] = v
+    return await _http_post("/bookings", body, api_key=api_key)
 
 
 # -----------------------------------------------------------------------------
