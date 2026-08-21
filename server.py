@@ -5,7 +5,7 @@ LocalGEO Phase 2 Layer 3 (tool execution layer of the protocol stack).
 One MCP server reaches three runtimes: Claude.ai (native), ChatGPT (Apps SDK
 is built on MCP), Perplexity (custom remote connectors).
 
-Transport: Streamable HTTP for remote use (Railway-deployed). Stateless JSON
+Transport: Streamable HTTP for remote use (Atlas-deployed). Stateless JSON
 per recommended pattern in the MCP spec.
 
 Read-only tools shipped (v0.1 + v0.1.1):
@@ -16,7 +16,7 @@ Read-only tools shipped (v0.1 + v0.1.1):
   - tintatlanta_check_availability    (GET  /api/v1/availability)
   - tintatlanta_flat_glass_estimate   (POST /api/v1/flat-glass/estimate)
 
-Roadmapped for v0.2 (multi-session, side-effect tools with consent gates):
+Write-side tools shipped (v0.2, with consent gates):
   - tintatlanta_submit_quote_request   (side_effect=creates_lead, consent gate)
   - tintatlanta_register_api_key
   - tintatlanta_book_appointment       (side_effect=books_appointment + charges_deposit, consent gate, requires API key)
@@ -37,12 +37,12 @@ from mcp.server.fastmcp import FastMCP
 # Configuration
 # -----------------------------------------------------------------------------
 
-# UPSTREAM_URL points to the Railway proxy by default (which itself rewrites
+# UPSTREAM_URL points to the Atlas proxy by default (which itself rewrites
 # the User-Agent and forwards to https://tintatlanta.com/api/v1). The proxy
 # bypasses Hostgator's mod_security UA-blocking. Override via env var.
 UPSTREAM_URL = os.environ.get(
     "UPSTREAM_URL",
-    "https://inspiring-tenderness-production.up.railway.app",
+    "https://tintatlanta-api.askboswell.com",
 )
 SERVER_VERSION = "0.2.0"
 SERVER_USER_AGENT = f"TintAtlanta-MCP/{SERVER_VERSION}"
@@ -626,13 +626,13 @@ async def tintatlanta_book_appointment(
 
 
 # -----------------------------------------------------------------------------
-# Health check (Railway uses this to confirm the container is up)
+# Health check
 # -----------------------------------------------------------------------------
 
 
 @mcp.custom_route("/health", methods=["GET"])
 async def health(_request) -> Any:  # type: ignore[no-untyped-def]
-    """Plain HTTP health endpoint for Railway's healthcheck AND the CRM dashboard
+    """Plain HTTP health endpoint for the container healthcheck and CRM dashboard
     monitor. The tool list is derived from the live MCP registry so it can never
     drift from the actually-registered tools (the old hardcoded list did). CORS is
     open so the server-rendered CRM dashboard can read it cross-origin.
@@ -664,7 +664,7 @@ async def health(_request) -> Any:  # type: ignore[no-untyped-def]
 if __name__ == "__main__":
     from mcp.server.streamable_http import TransportSecuritySettings
 
-    port = int(os.environ.get("PORT", 8080))
+    port = int(os.environ.get("PORT", "8080"))
 
     # streamable-http transport: single endpoint, stateless JSON. Compatible
     # with Claude.ai's remote MCP, Perplexity custom remote connectors, and
@@ -672,20 +672,13 @@ if __name__ == "__main__":
     mcp.settings.host = "0.0.0.0"
     mcp.settings.port = port
 
-    # DNS-rebinding-protection bypass for the Railway public domain. The
-    # mcp-python-sdk ships with host validation enabled by default (good
-    # default for localhost dev), which 421s any Host header not in
-    # allowed_hosts. We're behind Railway's edge proxy, so the Host header
-    # arrives as the public app URL — list it explicitly. Set
-    # ALLOWED_MCP_HOSTS env to a comma-separated list to override (e.g. when
-    # the Railway custom domain changes).
-    railway_host = os.environ.get("RAILWAY_PUBLIC_DOMAIN", "")
+    # The SDK enables DNS-rebinding protection by default. List every public
+    # hostname explicitly through ALLOWED_MCP_HOSTS; Atlas sets this to the
+    # canonical public MCP domain in docker-compose.atlas.yml.
     extra_hosts_env = os.environ.get("ALLOWED_MCP_HOSTS", "")
     allowed_hosts = [h.strip() for h in extra_hosts_env.split(",") if h.strip()]
-    if railway_host and railway_host not in allowed_hosts:
-        allowed_hosts.append(railway_host)
-    # Always allow the local container address so Railway's healthcheck
-    # passes. /health is a custom_route and bypasses MCP-session host
+    # Always allow local container addresses for health and private probes.
+    # /health is a custom_route and bypasses MCP-session host
     # validation, but we keep these here for any local + IP-based probes.
     for h in ("localhost", "127.0.0.1", "0.0.0.0", f"localhost:{port}", f"127.0.0.1:{port}"):
         if h not in allowed_hosts:

@@ -20,7 +20,7 @@ the LocalGEO Phase 2 protocol stack.
                                        │
                                        │ HTTP (JSON, with TintAtlanta-MCP UA)
                                        ▼
-                  [tintatlanta-api-proxy on Railway]
+                   [tintatlanta-api-proxy on Atlas]
                                        │
                                        │ HTTP (UA stripped, mod_security bypass)
                                        ▼
@@ -40,7 +40,7 @@ the LocalGEO Phase 2 protocol stack.
 | `tintatlanta_list_faq` | none | none | FAQs, optional category filter |
 | `tintatlanta_get_estimate` | none | none | Automotive price estimate (POST /estimates) |
 
-## Tools (roadmapped — v0.2 multi-session)
+## Additional tools (v0.2 multi-session)
 
 | Tool | Side effect | Auth | Purpose |
 |---|---|---|---|
@@ -50,29 +50,22 @@ the LocalGEO Phase 2 protocol stack.
 | `tintatlanta_register_api_key` | none | none | Issue API key for booking access |
 | `tintatlanta_book_appointment` | **books_appointment** | **api_key** | Actual booking (calls /api/v1/bookings) |
 
-The two write-side tools (`submit_quote_request`, `book_appointment`) need
-a consent-gate annotation so MCP runtimes prompt the user before the agent
-calls them. v0.2 work.
+The two write-side tools (`submit_quote_request`, `book_appointment`) carry
+consent-gate annotations so MCP runtimes can prompt before the agent calls them.
 
-## Deploy to Railway
+## Deploy to Atlas
 
-The repo is shaped to mirror `tintatlanta-api-proxy`:
-- `Dockerfile` — Python 3.11-slim, single-file server, `EXPOSE 8080`
-- `railway.json` — build via Dockerfile, healthcheck at `/health`
-- `requirements.txt` — `mcp`, `httpx`, `pydantic`, `uvicorn`
+The Atlas release uses:
+- `Dockerfile.atlas` — digest-pinned Python 3.11, locked dependencies,
+  unprivileged runtime user, and `/health` healthcheck
+- `docker-compose.atlas.yml` — read-only filesystem, dropped capabilities,
+  no published host ports, and Traefik TLS routing
+- `requirements.lock` — reproducible Linux dependency resolution
 - `server.py` — the FastMCP server
 
-Steps (mirror what was done for `tintatlanta-api-proxy`):
-1. Push this repo to GitHub at `stevekrontz-dev/tintatlanta-mcp-server`
-   (or `Tint-Atlanta/tintatlanta-mcp-server` if Steve prefers the org).
-2. In Railway: New Project → Deploy from GitHub repo → select this repo.
-3. Railway auto-detects the Dockerfile and railway.json.
-4. (Optional) Set `UPSTREAM_URL` env var if you want the MCP server to hit
-   the direct PHP API (`https://tintatlanta.com/api/v1`) instead of the
-   default of going through the proxy.
-5. Railway assigns a public URL like
-   `https://tintatlanta-mcp-server-production.up.railway.app` — the MCP
-   endpoint is at the root path (Streamable HTTP single-endpoint pattern).
+The canonical public endpoint is
+`https://tintatlanta-mcp.askboswell.com/mcp`. Its default upstream is the
+Atlas proxy at `https://tintatlanta-api.askboswell.com`.
 
 ## Wire it into the runtimes
 
@@ -80,21 +73,18 @@ Steps (mirror what was done for `tintatlanta-api-proxy`):
 
 Settings → Connectors → Add custom connector:
 - Type: Remote MCP
-- URL: `https://<railway-url>/`
+- URL: `https://tintatlanta-mcp.askboswell.com/mcp`
 
 ### ChatGPT (Apps SDK)
 
-Apps SDK is built on MCP. Register the same Railway URL as a custom MCP
-endpoint. The 4 tools appear in the Apps SDK tool roster automatically —
+Apps SDK is built on MCP. Register the same Atlas URL as a custom MCP
+endpoint. The 9 tools appear in the Apps SDK tool roster automatically —
 their input schemas, descriptions, and annotations come from the FastMCP
 decorators.
 
 ### Perplexity (custom remote connector)
 
-Perplexity → Connectors → Add custom remote → URL: same Railway URL.
-Auth: none for v0.1 (the server passes through the upstream API which
-also has no auth for the four tools). When `book_appointment` ships in
-v0.2, add bearer-token passthrough.
+Perplexity → Connectors → Add custom remote → URL: the same Atlas URL.
 
 ## Local development
 
@@ -118,9 +108,9 @@ docker build -t tintatlanta-mcp .
 docker run -p 8080:8080 tintatlanta-mcp
 ```
 
-All four tools call through correctly. `tintatlanta_get_estimate` for
+All nine tools are registered. `tintatlanta_get_estimate` for
 a 2026 Tesla Model Y / ceramic / full coverage returns live pricing
-($600 base) via the full chain: MCP server → Railway proxy → tintatlanta.com.
+($600 base) via the full chain: Atlas MCP server → Atlas proxy → tintatlanta.com.
 
 ### Known Windows local-test quirk
 
@@ -128,14 +118,14 @@ On **Windows + Python 3.14 + FastMCP 1.27** the StreamableHTTP transport
 wraps the inputSchema fields under a single `params` key (visible via
 `tools/list` over HTTP, even though direct module introspection shows
 the correct flat schema). This is a Python-3.14 typing/introspection
-edge case — does NOT affect Docker (Python 3.11) or Railway. If you're
+edge case — does NOT affect Docker (Python 3.11) or Atlas. If you're
 testing locally on Windows, use the Docker workflow above instead of
 running `python server.py` directly.
 
 ## Discovery via /.well-known/mcp.json
 
 (Roadmapped) Publish `https://tintatlanta.com/.well-known/mcp.json`
-pointing at the Railway URL so MCP-aware crawlers can find this server
+pointing at `https://tintatlanta-mcp.askboswell.com/mcp` so MCP-aware crawlers can find this server
 the same way they find `/.well-known/agent.json` (A2A) and
 `/.well-known/agents.json` (OpenAI lineage). For now the URL is
 discoverable via Tint Atlanta's OpenAPI manifest's `x_tintatlanta`
