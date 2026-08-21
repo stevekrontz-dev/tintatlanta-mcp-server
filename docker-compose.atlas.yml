@@ -1,0 +1,38 @@
+services:
+  mcp:
+    image: tintatlanta-mcp-server:${RELEASE_SHA:?RELEASE_SHA is required}
+    build:
+      context: .
+      dockerfile: Dockerfile.atlas
+    container_name: tintatlanta-mcp-server-atlas
+    restart: unless-stopped
+    read_only: true
+    tmpfs:
+      - /tmp:size=16m,mode=1777
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    environment:
+      - UPSTREAM_URL=https://tintatlanta-api.askboswell.com
+      - ALLOWED_MCP_HOSTS=tintatlanta-mcp.askboswell.com
+    networks:
+      - coolify
+    labels:
+      - traefik.enable=true
+      - traefik.docker.network=coolify
+      - traefik.http.routers.tintatlanta-mcp-http.rule=Host(`tintatlanta-mcp.askboswell.com`)
+      - traefik.http.routers.tintatlanta-mcp-http.entrypoints=http
+      - traefik.http.routers.tintatlanta-mcp-http.middlewares=tintatlanta-mcp-https
+      - traefik.http.middlewares.tintatlanta-mcp-https.redirectscheme.scheme=https
+      - traefik.http.routers.tintatlanta-mcp.rule=Host(`tintatlanta-mcp.askboswell.com`)
+      - traefik.http.routers.tintatlanta-mcp.entrypoints=https
+      - traefik.http.routers.tintatlanta-mcp.tls=true
+      - traefik.http.routers.tintatlanta-mcp.tls.certresolver=letsencrypt
+      - traefik.http.services.tintatlanta-mcp.loadbalancer.server.port=8080
+      - org.opencontainers.image.revision=${RELEASE_SHA}
+      - org.opencontainers.image.source=https://github.com/stevekrontz-dev/tintatlanta-mcp-server
+
+networks:
+  coolify:
+    external: true
