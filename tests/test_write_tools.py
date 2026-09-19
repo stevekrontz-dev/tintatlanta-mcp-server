@@ -205,6 +205,32 @@ def test_book_appointment_forwards_bearer_and_required_fields(monkeypatch):
     assert result == {"booking_id": "bk_1"}
 
 
+def test_book_appointment_without_api_key_sends_no_authorization_header(monkeypatch):
+    """api_key is optional (keyless booking, Task 1.5): omitting it must not
+    send an Authorization header at all."""
+    rec = _Recorder(payload={"success": True, "data": {"booking_id": "bk_2"}})
+    _patch_post(monkeypatch, rec)
+
+    result = _run(
+        server.tintatlanta_book_appointment(
+            date="2026-06-10",
+            time="10:00",
+            customer_name="Bob",
+            customer_phone="404-555-0199",
+            customer_email="bob@example.com",
+        )
+    )
+
+    assert rec.last.method == "POST"
+    assert str(rec.last.url).endswith("/bookings")
+    assert "authorization" not in rec.header_names(rec.last)
+    body = rec.last_body()
+    assert body["date"] == "2026-06-10"
+    assert body["customer_name"] == "Bob"
+    assert "api_key" not in body
+    assert result == {"booking_id": "bk_2"}
+
+
 def test_book_appointment_includes_only_provided_vehicle_optionals(monkeypatch):
     rec = _Recorder()
     _patch_post(monkeypatch, rec)

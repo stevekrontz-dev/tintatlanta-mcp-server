@@ -19,7 +19,7 @@ Read-only tools shipped (v0.1 + v0.1.1):
 Write-side tools shipped (v0.2, with consent gates):
   - tintatlanta_submit_quote_request   (side_effect=creates_lead, consent gate)
   - tintatlanta_register_api_key
-  - tintatlanta_book_appointment       (side_effect=books_appointment + charges_deposit, consent gate, requires API key)
+  - tintatlanta_book_appointment       (side_effect=books_appointment + charges_deposit, consent gate, no API key required)
 
 The upstream API itself is documented at:
   - https://tintatlanta.com/api/v1/capabilities  (canonical capability manifest)
@@ -333,7 +333,7 @@ async def tintatlanta_check_availability(
     No side effects — does not hold or reserve a slot. Safe to call without
     user consent. To actually reserve, call tintatlanta_book_appointment
     (when available) — that one creates a lead, charges a deposit, and
-    requires explicit user consent + an API key.
+    requires explicit user consent. No API key needed.
 
     Args:
         date: Optional ISO date 'YYYY-MM-DD' to scope to one day's open
@@ -519,10 +519,12 @@ async def tintatlanta_register_api_key(
     use_case: str,
 ) -> Dict[str, Any]:
     """
-    Register for an API key that authorizes appointment booking via
-    tintatlanta_book_appointment. Returns a one-time key of the form
-    `ta_live_<hex>` good for 300 requests/minute. Only one active key exists
-    per email (re-registering the same email rotates/replaces the key).
+    Register for an API key that raises the rate limit on
+    tintatlanta_book_appointment calls. Booking works fine without a key —
+    this is only for integrations that need a higher limit than the
+    keyless default. Returns a one-time key of the form `ta_live_<hex>`
+    good for 300 requests/minute. Only one active key exists per email
+    (re-registering the same email rotates/replaces the key).
 
     IMPORTANT: STORE the returned api_key and REUSE it for all subsequent
     tintatlanta_book_appointment calls. The full key is shown ONLY ONCE in
@@ -543,14 +545,14 @@ async def tintatlanta_register_api_key(
 
 
 # -----------------------------------------------------------------------------
-# Tool: book_appointment (WRITE — books a real appointment, needs API key)
+# Tool: book_appointment (WRITE — books a real appointment, no API key needed)
 # -----------------------------------------------------------------------------
 
 
 @mcp.tool(
     name="tintatlanta_book_appointment",
     annotations={
-        "title": "Book an appointment (real booking, requires API key)",
+        "title": "Book an appointment (real booking, no API key required)",
         "readOnlyHint": False,
         "destructiveHint": False,
         "idempotentHint": False,
@@ -558,7 +560,6 @@ async def tintatlanta_register_api_key(
     },
 )
 async def tintatlanta_book_appointment(
-    api_key: str,
     date: str,
     time: str,
     customer_name: str,
@@ -572,22 +573,20 @@ async def tintatlanta_book_appointment(
     coverage: Optional[str] = None,
     film_type: Optional[str] = None,
     special_requests: Optional[str] = None,
+    api_key: Optional[str] = None,
 ) -> Dict[str, Any]:
     """
     Book a REAL appointment at the Woodstock shop. This commits a slot on the
     shop's calendar and is followed up by staff — treat it like a binding
     action.
 
-    Requires an `api_key` obtained from tintatlanta_register_api_key (it is
-    sent as an Authorization: Bearer token). Before calling, ALWAYS call
+    No API key needed to book. Before calling, ALWAYS call
     tintatlanta_check_availability first to confirm the requested date/time is
-    an actually-open slot, and read the date, time, and vehicle/job details
-    back to the user and get their confirmation. A booking cannot be quietly
-    undone.
+    an actually-open slot. Then read the date, time, and vehicle/job details
+    back to the customer and get their explicit confirmation before booking.
+    A booking cannot be quietly undone.
 
     Args:
-        api_key: A `ta_live_<hex>` key from tintatlanta_register_api_key.
-            Required. Sent as Authorization: Bearer, never stored server-side.
         date: Appointment date 'YYYY-MM-DD'. Required. Must be a slot returned
             by tintatlanta_check_availability.
         time: Appointment start time (e.g. '10:00'). Required.
@@ -602,6 +601,10 @@ async def tintatlanta_book_appointment(
         coverage: 'full' or 'front2' (automotive coverage).
         film_type: 'standard' or 'ceramic'.
         special_requests: Any free-text notes for the appointment.
+        api_key: Optional. Raises rate limits for registered integrations;
+            not required to book. A `ta_live_<hex>` key from
+            tintatlanta_register_api_key, sent as Authorization: Bearer,
+            never stored server-side.
     """
     body: Dict[str, Any] = {
         "date": date,
