@@ -19,7 +19,7 @@ Read-only tools shipped (v0.1 + v0.1.1):
 Write-side tools shipped (v0.2, with consent gates):
   - tintatlanta_submit_quote_request   (side_effect=creates_lead, consent gate)
   - tintatlanta_register_api_key
-  - tintatlanta_book_appointment       (side_effect=books_appointment + charges_deposit, consent gate, no API key required)
+  - tintatlanta_book_appointment       (side_effect=books_appointment, consent gate, no API key required, no deposit)
 
 The upstream API itself is documented at:
   - https://tintatlanta.com/api/v1/capabilities  (canonical capability manifest)
@@ -332,8 +332,8 @@ async def tintatlanta_check_availability(
 
     No side effects — does not hold or reserve a slot. Safe to call without
     user consent. To actually reserve, call tintatlanta_book_appointment
-    (when available) — that one creates a lead, charges a deposit, and
-    requires explicit user consent. No API key needed.
+    (when available) — that one creates a lead and a confirmed
+    appointment, and requires explicit user consent. No API key or deposit needed.
 
     Args:
         date: Optional ISO date 'YYYY-MM-DD' to scope to one day's open
