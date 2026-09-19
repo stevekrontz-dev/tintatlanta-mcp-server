@@ -17,8 +17,14 @@ def test_mcp_uses_atlas_proxy_and_accepts_only_the_atlas_public_host() -> None:
     assert "cap_drop:\n      - ALL" in compose
     assert "no-new-privileges:true" in compose
     assert "\n    ports:" not in compose
-    assert "UPSTREAM_URL=https://tintatlanta-api.askboswell.com" in compose
-    assert "ALLOWED_MCP_HOSTS=tintatlanta-mcp.askboswell.com" in compose
-    assert "Host(`tintatlanta-mcp.askboswell.com`)" in compose
-    assert "https://tintatlanta-api.askboswell.com" in server
+    assert "UPSTREAM_URL=https://agents.tintatlanta.com/api" in compose
+    assert "ALLOWED_MCP_HOSTS=agents.tintatlanta.com,tintatlanta-mcp.askboswell.com" in compose
+    assert (
+        "Host(`agents.tintatlanta.com`) && (Path(`/mcp`) || PathPrefix(`/mcp/`) || Path(`/health`))"
+        in compose
+    )
+    assert "routers.ta-agents-mcp.tls.certresolver=letsencrypt" in compose
+    # The old hostname keeps answering until it is deliberately retired.
+    assert "routers.tintatlanta-mcp.rule=Host(`tintatlanta-mcp.askboswell.com`)" in compose
+    assert '"https://agents.tintatlanta.com/api"' in server
     assert "up.railway.app" not in server

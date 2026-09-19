@@ -64,8 +64,9 @@ The Atlas release uses:
 - `server.py` — the FastMCP server
 
 The canonical public endpoint is
-`https://tintatlanta-mcp.askboswell.com/mcp`. Its default upstream is the
-Atlas proxy at `https://tintatlanta-api.askboswell.com`.
+`https://agents.tintatlanta.com/mcp`. Its default upstream is the
+Atlas proxy at `https://agents.tintatlanta.com/api`. The older
+`tintatlanta-mcp.askboswell.com` host still answers until it is retired.
 
 ## Wire it into the runtimes
 
@@ -73,7 +74,7 @@ Atlas proxy at `https://tintatlanta-api.askboswell.com`.
 
 Settings → Connectors → Add custom connector:
 - Type: Remote MCP
-- URL: `https://tintatlanta-mcp.askboswell.com/mcp`
+- URL: `https://agents.tintatlanta.com/mcp`
 
 ### ChatGPT (Apps SDK)
 
@@ -125,7 +126,7 @@ running `python server.py` directly.
 ## Discovery via /.well-known/mcp.json
 
 (Roadmapped) Publish `https://tintatlanta.com/.well-known/mcp.json`
-pointing at `https://tintatlanta-mcp.askboswell.com/mcp` so MCP-aware crawlers can find this server
+pointing at `https://agents.tintatlanta.com/mcp` so MCP-aware crawlers can find this server
 the same way they find `/.well-known/agent.json` (A2A) and
 `/.well-known/agents.json` (OpenAI lineage). For now the URL is
 discoverable via Tint Atlanta's OpenAPI manifest's `x_tintatlanta`

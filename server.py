@@ -37,12 +37,13 @@ from mcp.server.fastmcp import FastMCP
 # Configuration
 # -----------------------------------------------------------------------------
 
-# UPSTREAM_URL points to the Atlas proxy by default (which itself rewrites
-# the User-Agent and forwards to https://tintatlanta.com/api/v1). The proxy
-# bypasses Hostgator's mod_security UA-blocking. Override via env var.
+# UPSTREAM_URL points to the Atlas proxy by default, at the agent front door
+# agents.tintatlanta.com/api (the proxy rewrites the User-Agent and forwards to
+# https://tintatlanta.com/api/v1). The proxy bypasses Hostgator's mod_security
+# UA-blocking. Override via env var.
 UPSTREAM_URL = os.environ.get(
     "UPSTREAM_URL",
-    "https://tintatlanta-api.askboswell.com",
+    "https://agents.tintatlanta.com/api",
 )
 SERVER_VERSION = "0.2.0"
 SERVER_USER_AGENT = f"TintAtlanta-MCP/{SERVER_VERSION}"
